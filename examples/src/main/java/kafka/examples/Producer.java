@@ -32,9 +32,22 @@ public class Producer extends Thread {
     private final KafkaProducer<Integer, String> producer;
     private final String topic;
     private final Boolean isAsync;
+    /**
+     * 往kafka中发送数据的数量
+     */
     private int numRecords;
     private final CountDownLatch latch;
 
+    /**
+     * 初始化kafka生产者
+     * @param topic 主题
+     * @param isAsync 是否异步生产数据
+     * @param transactionalId
+     * @param enableIdempotency
+     * @param numRecords 往kafka中发送数据的数量
+     * @param transactionTimeoutMs
+     * @param latch
+     */
     public Producer(final String topic,
                     final Boolean isAsync,
                     final String transactionalId,
@@ -43,8 +56,10 @@ public class Producer extends Thread {
                     final int transactionTimeoutMs,
                     final CountDownLatch latch) {
         Properties props = new Properties();
+        // 配置用户拉取kafka meta data 的URL
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, KafkaProperties.KAFKA_SERVER_URL + ":" + KafkaProperties.KAFKA_SERVER_PORT);
         props.put(ProducerConfig.CLIENT_ID_CONFIG, "DemoProducer");
+        // 设置序列化格式, 因为kafka传输数据时用的是二进制方式,因此需要进行序列化方式的设定
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, IntegerSerializer.class.getName());
         props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
         if (transactionTimeoutMs > 0) {
@@ -73,6 +88,9 @@ public class Producer extends Thread {
         while (recordsSent < numRecords) {
             String messageStr = "Message_" + messageKey;
             long startTime = System.currentTimeMillis();
+            /**
+             * kafka发送数据方式有两种: 异步发送和同步发送, 异步发送需要指定回调函数. 异步发送的性能一般比较好
+             */
             if (isAsync) { // Send asynchronously
                 producer.send(new ProducerRecord<>(topic,
                     messageKey,
@@ -111,7 +129,7 @@ class DemoCallBack implements Callback {
      * A callback method the user can implement to provide asynchronous handling of request completion. This method will
      * be called when the record sent to the server has been acknowledged. When exception is not null in the callback,
      * metadata will contain the special -1 value for all fields except for topicPartition, which will be valid.
-     *
+     * 发送完成之后的回调函数
      * @param metadata  The metadata for the record that was sent (i.e. the partition and offset). An empty metadata
      *                  with -1 value for all fields except for topicPartition will be returned if an error occurred.
      * @param exception The exception thrown during processing of this record. Null if no error occurred.
