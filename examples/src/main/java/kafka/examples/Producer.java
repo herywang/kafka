@@ -69,7 +69,7 @@ public class Producer extends Thread {
             props.put(ProducerConfig.TRANSACTIONAL_ID_CONFIG, transactionalId);
         }
         props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, enableIdempotency);
-
+        // initialize kafka producer.
         producer = new KafkaProducer<>(props);
         this.topic = topic;
         this.isAsync = isAsync;
