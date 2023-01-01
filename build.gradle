@@ -792,9 +792,9 @@ project(':streams:upgrade-system-tests-0100') {
     testCompile libs.kafkaStreams_0100
   }
 
-  systemTestLibs {
-    dependsOn testJar
-  }
+//  systemTestLibs {
+//    dependsOn testJar
+//  }
 }
 
 
