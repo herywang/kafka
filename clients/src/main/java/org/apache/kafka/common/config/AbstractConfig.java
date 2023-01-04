@@ -476,7 +476,7 @@ public class AbstractConfig {
             return objects;
         Map<String, Object> configPairs = originals();
         configPairs.putAll(configOverrides);
-        for (Object klass : classNames) {
+        for (String klass : classNames) {
             Object o = getConfiguredInstance(klass, t, configPairs);
             objects.add(t.cast(o));
         }

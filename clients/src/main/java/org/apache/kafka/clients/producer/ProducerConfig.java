@@ -276,7 +276,9 @@ public class ProducerConfig extends AbstractConfig {
     /** <code>socket.connection.setup.timeout.max.ms</code> */
     public static final String SOCKET_CONNECTION_SETUP_TIMEOUT_MAX_MS_CONFIG = CommonClientConfigs.SOCKET_CONNECTION_SETUP_TIMEOUT_MAX_MS_CONFIG;
 
-    /** <code>connections.max.idle.ms</code> */
+    /** <code>connections.max.idle.ms</code>
+     * 空闲时间超过指定的空闲时间就会关闭producer的网络连接, 默认9分钟, 单位毫秒
+     * */
     public static final String CONNECTIONS_MAX_IDLE_MS_CONFIG = CommonClientConfigs.CONNECTIONS_MAX_IDLE_MS_CONFIG;
 
     /** <code>partitioner.class</code> */

@@ -19,9 +19,9 @@ import java.nio.charset.StandardCharsets
 
 buildscript {
   repositories {
-    mavenLocal()
+//    mavenLocal()
     maven {
-      url "https://maven.aliyun.com/nexus/content/repositories/central/"
+      url "https://maven.aliyun.com/repository/public/"
     }
     mavenCentral()
   }
@@ -124,6 +124,10 @@ ext {
 allprojects {
 
   repositories {
+//    mavenLocal()
+    maven {
+      url "https://maven.aliyun.com/repository/public/"
+    }
     mavenCentral()
   }
 

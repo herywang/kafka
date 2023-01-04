@@ -244,6 +244,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     private final int maxRequestSize;
     private final long totalMemorySize;
     private final ProducerMetadata metadata;
+    // 本质是一个缓存, 是一个核心组件
     private final RecordAccumulator accumulator;
     private final Sender sender;
     private final Thread ioThread;
@@ -335,6 +336,10 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     }
 
     // visible for testing
+
+    /**
+     * 首先进行参数初始化
+     */
     @SuppressWarnings("unchecked")
     KafkaProducer(ProducerConfig config,
                   Serializer<K> keySerializer,
@@ -368,6 +373,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             List<MetricsReporter> reporters = CommonClientConfigs.metricsReporters(clientId, config);
             MetricsContext metricsContext = new KafkaMetricsContext(JMX_PREFIX,
                     config.originalsWithPrefix(CommonClientConfigs.METRICS_CONTEXT_PREFIX));
+            // kafka一些测量工具
             this.metrics = new Metrics(metricConfig, reporters, time, metricsContext);
             this.producerMetrics = new KafkaProducerMetrics(metrics);
             // 分区器, kafka为用户提供了默认的分区器,当然也支持用户自定义配置分区器
@@ -407,6 +413,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                     valueSerializer, interceptorList, reporters);
             this.maxRequestSize = config.getInt(ProducerConfig.MAX_REQUEST_SIZE_CONFIG);
             this.totalMemorySize = config.getLong(ProducerConfig.BUFFER_MEMORY_CONFIG);
+            // 设置压缩格式
             this.compressionType = CompressionType.forName(config.getString(ProducerConfig.COMPRESSION_TYPE_CONFIG));
 
             this.maxBlockTimeMs = config.getLong(ProducerConfig.MAX_BLOCK_MS_CONFIG);
@@ -424,6 +431,8 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             // As per Kafka producer configuration documentation batch.size may be set to 0 to explicitly disable
             // batching which in practice actually means using a batch size of 1.
             int batchSize = Math.max(1, config.getInt(ProducerConfig.BATCH_SIZE_CONFIG));
+            // 创建一个核心缓存组件
+            // creating a critical cache component.
             this.accumulator = new RecordAccumulator(logContext,
                     batchSize,
                     this.compressionType,
@@ -437,10 +446,11 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                     apiVersions,
                     transactionManager,
                     new BufferPool(this.totalMemorySize, batchSize, metrics, time, PRODUCER_METRIC_GROUP_NAME));
-
+            // kafka集群地址参数
             List<InetSocketAddress> addresses = ClientUtils.parseAndValidateAddresses(
                     config.getList(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG),
                     config.getString(ProducerConfig.CLIENT_DNS_LOOKUP_CONFIG));
+            // 初始化元数据
             if (metadata != null) {
                 this.metadata = metadata;
             } else {
@@ -453,9 +463,12 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                 this.metadata.bootstrap(addresses);
             }
             this.errors = this.metrics.sensor("errors");
+            // 初始化Sender runnable 接口, 是一个重要管理网路传输组件, 具体地方体现在newSender代码中的new NetworkClient() 这一行代码上
             this.sender = newSender(logContext, kafkaClient, this.metadata);
             String ioThreadName = NETWORK_THREAD_PREFIX + " | " + clientId;
+            // 把业务代码和线程代码隔离开
             this.ioThread = new KafkaThread(ioThreadName, this.sender, true);
+            // 启动这一网络io线程组件
             this.ioThread.start();
             config.logUnused();
             AppInfoParser.registerAppInfo(JMX_PREFIX, clientId, metrics, time.milliseconds());
@@ -508,6 +521,9 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
 
     // visible for testing
     Sender newSender(LogContext logContext, KafkaClient kafkaClient, ProducerMetadata metadata) {
+        // 每个连接最多能容忍多少个数据没有收到响应, 默认是5
+        // 如果有5个数据均没有收到响应, 则发送第六条数据将报错. 这个参数的关键作用就是kafka有重试发送的机制
+        // 此外还需要注意, 由于kafka有重试机制, 因此如果业务对数据顺序有严格要求的话, 这个参数需要设置成为1
         int maxInflightRequests = producerConfig.getInt(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION);
         int requestTimeoutMs = producerConfig.getInt(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG);
         ChannelBuilder channelBuilder = ClientUtils.createChannelBuilder(producerConfig, time, logContext);
@@ -521,7 +537,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                 maxInflightRequests,
                 producerConfig.getLong(ProducerConfig.RECONNECT_BACKOFF_MS_CONFIG),
                 producerConfig.getLong(ProducerConfig.RECONNECT_BACKOFF_MAX_MS_CONFIG),
-                producerConfig.getInt(ProducerConfig.SEND_BUFFER_CONFIG),
+                producerConfig.getInt(ProducerConfig.SEND_BUFFER_CONFIG), // socket发送数据缓存大小参数, 默认128KB
                 producerConfig.getInt(ProducerConfig.RECEIVE_BUFFER_CONFIG),
                 requestTimeoutMs,
                 producerConfig.getLong(ProducerConfig.SOCKET_CONNECTION_SETUP_TIMEOUT_MS_CONFIG),
@@ -532,6 +548,13 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                 throttleTimeSensor,
                 logContext);
 
+        /*
+         * kafka ACK 确认机制,
+         * 0: kafka发送到broker后就直接返回, 不管broker是否写入磁盘成功, 会有丢数据可能
+         * 1: producer发送数据到broker之后, 数据写入leader partition之后才会发送响应, 也存在丢数据的可能
+         * -1: producer发送的数据写入到leader的partition之后, 并且数据同步到所有follower之后才会发送响应, 不存在数据丢失可能
+         */
+
         short acks = Short.parseShort(producerConfig.getString(ProducerConfig.ACKS_CONFIG));
         return new Sender(logContext,
                 client,
@@ -540,6 +563,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                 maxInflightRequests == 1,
                 producerConfig.getInt(ProducerConfig.MAX_REQUEST_SIZE_CONFIG),
                 acks,
+                          // kafka重试机制配置参数, 重试次数, 一般在开发项目中都会设置重试参数
                 producerConfig.getInt(ProducerConfig.RETRIES_CONFIG),
                 metricsRegistry.senderMetrics,
                 time,
@@ -960,7 +984,9 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     @Override
     public Future<RecordMetadata> send(ProducerRecord<K, V> record, Callback callback) {
         // intercept the record, which can be potentially modified; this method does not throw exceptions
+        // 责任链模型, 对发送的record进行拦截器链式处理
         ProducerRecord<K, V> interceptedRecord = this.interceptors.onSend(record);
+        // 执行发送数据
         return doSend(interceptedRecord, callback);
     }
 
@@ -982,11 +1008,13 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
 
     /**
      * Implementation of asynchronously send a record to a topic.
+     * 异步往topic中发送数据
      */
     private Future<RecordMetadata> doSend(ProducerRecord<K, V> record, Callback callback) {
         // Append callback takes care of the following:
         //  - call interceptors and user callback on completion
         //  - remember partition that is calculated in RecordAccumulator.append
+        // 对回调函数进行封装, 包含了拦截器
         AppendCallbacks<K, V> appendCallbacks = new AppendCallbacks<K, V>(callback, this.interceptors, record);
 
         try {

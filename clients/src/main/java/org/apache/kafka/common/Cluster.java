@@ -35,15 +35,25 @@ import java.util.Set;
 public final class Cluster {
 
     private final boolean isBootstrapConfigured;
+    // 一个kafka集群是有多个节点的, nodes代表全部kafka集群节点信息
     private final List<Node> nodes;
+    // 未授权的topic
     private final Set<String> unauthorizedTopics;
     private final Set<String> invalidTopics;
     private final Set<String> internalTopics;
     private final Node controller;
+    /**
+     * 下面有很多数据结构, 这些数据结构有很多是冗余的, 目的是快速定位到相应的分区, 以空间换时间
+     */
+    // 代表的是一个partition和partition信息, 是因为partition有副本
     private final Map<TopicPartition, PartitionInfo> partitionsByTopicPartition;
+    // 一个topic对应哪些副本
     private final Map<String, List<PartitionInfo>> partitionsByTopic;
+    // topic对应的可用partition
     private final Map<String, List<PartitionInfo>> availablePartitionsByTopic;
+    // 一台服务器上有哪些partition, 服务器用的是ID号
     private final Map<Integer, List<PartitionInfo>> partitionsByNode;
+    // 服务器编号和服务器节点对象对应关系
     private final Map<Integer, Node> nodesById;
     private final ClusterResource clusterResource;
     private final Map<String, Uuid> topicIds;
