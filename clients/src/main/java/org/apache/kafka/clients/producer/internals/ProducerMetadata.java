@@ -116,6 +116,8 @@ public class ProducerMetadata extends Metadata {
     public synchronized void awaitUpdate(final int lastVersion, final long timeoutMs) throws InterruptedException {
         long currentTimeMs = time.milliseconds();
         long deadlineMs = currentTimeMs + timeoutMs < 0 ? Long.MAX_VALUE : currentTimeMs + timeoutMs;
+        // 等待后台更新, while true循环阻塞, 如果当前版本号大于上一次版本号,说明元数据已经更新了,则返回
+        // sender线程会累加
         time.waitObject(this, () -> {
             // Throw fatal exceptions, if there are any. Recoverable topic errors will be handled by the caller.
             maybeThrowFatalException();
@@ -137,7 +139,7 @@ public class ProducerMetadata extends Metadata {
                 newTopics.remove(metadata.topic());
             }
         }
-
+        // 唤醒线程上面方法中的time.waitObject()中等待的线程
         notifyAll();
     }
 

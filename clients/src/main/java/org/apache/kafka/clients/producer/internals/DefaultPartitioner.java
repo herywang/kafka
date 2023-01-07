@@ -67,9 +67,11 @@ public class DefaultPartitioner implements Partitioner {
      */
     public int partition(String topic, Object key, byte[] keyBytes, Object value, byte[] valueBytes, Cluster cluster,
                          int numPartitions) {
+        // 策略1: 发送数据时不指定key情况下使用stickyPartition分区策略
         if (keyBytes == null) {
             return stickyPartitionCache.partition(topic, cluster);
         }
+        // 策略2: 发送数据时指定了key则直接进行取hash值.
         return BuiltInPartitioner.partitionForKey(keyBytes, numPartitions);
     }
 

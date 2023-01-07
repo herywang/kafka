@@ -31,6 +31,7 @@ import java.util.Set;
 
 /**
  * An immutable representation of a subset of the nodes, topics, and partitions in the Kafka cluster.
+ * 客户端从kakfa集群拉取到的元数据信息
  */
 public final class Cluster {
 

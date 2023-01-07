@@ -271,6 +271,7 @@ public class Metadata implements Closeable {
 
         this.needPartialUpdate = requestVersion < this.requestVersion;
         this.lastRefreshMs = nowMs;
+        // 更新元数据的版本
         this.updateVersion += 1;
         if (!isPartialUpdate) {
             this.needFullUpdate = false;
@@ -280,7 +281,7 @@ public class Metadata implements Closeable {
         String previousClusterId = cache.clusterResource().clusterId();
 
         this.cache = handleMetadataResponse(response, isPartialUpdate, nowMs);
-
+        // 此时才算正式获取到了kafka集群的元数据信息
         Cluster cluster = cache.cluster();
         maybeSetMetadataError(cluster);
 

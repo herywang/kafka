@@ -291,11 +291,13 @@ public class RecordAccumulator {
         try {
             // Loop to retry in case we encounter partitioner's race conditions.
             while (true) {
+                // 场景驱动设计, 第一次进来由于某些条件的不满足会执行完while里面全部代码,第二次进来
                 // If the message doesn't have any partition affinity, so we pick a partition based on the broker
                 // availability and performance.  Note, that here we peek current partition before we hold the
                 // deque lock, so we'll need to make sure that it's not changed while we were waiting for the
                 // deque lock.
                 final BuiltInPartitioner.StickyPartitionInfo partitionInfo;
+                // 得到有效的分区号
                 final int effectivePartition;
                 if (partition == RecordMetadata.UNKNOWN_PARTITION) {
                     partitionInfo = topicInfo.builtInPartitioner.peekCurrentPartitionInfo(cluster);
@@ -309,12 +311,20 @@ public class RecordAccumulator {
                 setPartition(callbacks, effectivePartition);
 
                 // check if we have an in-progress batch
+                /**
+                 * 步骤1: 根据分区从batches中找到队列, 如果不存在, 则新建一个ArrayDequeue<>()
+                 */
                 Deque<ProducerBatch> dq = topicInfo.batches.computeIfAbsent(effectivePartition, k -> new ArrayDeque<>());
                 synchronized (dq) {
                     // After taking the lock, validate that the partition hasn't changed and retry.
                     if (partitionChanged(topic, topicInfo, partitionInfo, dq, nowMs, cluster))
                         continue;
 
+                    /**
+                     * 步骤2: 尝试往队列中写数据
+                     * 一开始第一次进来这里尝试添加数据是失败的, 因为现在虽然已经有了队列,但是数据是写在batches中的, batch是需要内存的,
+                     * 而目前还没有分配内存, 因此下面种的if()代码块中的逻辑不会被执行.
+                     */
                     RecordAppendResult appendResult = tryAppend(timestamp, key, value, headers, callbacks, dq, nowMs);
                     if (appendResult != null) {
                         // If queue has incomplete batches we disable switch (see comments in updatePartitionInfo).
@@ -331,10 +341,20 @@ public class RecordAccumulator {
                 }
 
                 if (buffer == null) {
+                    /**
+                     * 步骤3:
+                     * 计算一个批次大小,
+                     * 默认一个批次大小为16KB, d代码逻辑会将默认值和此条消息大小取一个最大值, 这里我们也能得到一个结论,如果生产者生产的消息
+                     * 大于16KB, 则一条消息就为一个批次, 因此在生产环境中药充分考虑到生产者发送数据的大小, 针对相应大小的批次进行kafka调优
+                     */
                     byte maxUsableMagic = apiVersions.maxUsableProduceMagic();
                     int size = Math.max(this.batchSize, AbstractRecords.estimateSizeInBytesUpperBound(maxUsableMagic, compression, key, value, headers));
                     log.trace("Allocating a new {} byte message buffer for topic {} partition {} with remaining timeout {}ms", size, topic, partition, maxTimeToBlock);
                     // This call may block if we exhausted buffer space.
+                    /**
+                     * 步骤4:
+                     * 从空闲内存池中分配大小, bufferPool是在kafkaProducer类中new出来的, 默认大小32MB
+                     */
                     buffer = free.allocate(size, maxTimeToBlock);
                     // Update the current time in case the buffer allocation blocked above.
                     // NOTE: getting time may be expensive, so calling it under a lock
@@ -346,7 +366,10 @@ public class RecordAccumulator {
                     // After taking the lock, validate that the partition hasn't changed and retry.
                     if (partitionChanged(topic, topicInfo, partitionInfo, dq, nowMs, cluster))
                         continue;
-
+                    /**
+                     * 步骤5:
+                     * 将消息写入到批次里面
+                     */
                     RecordAppendResult appendResult = appendNewBatch(topic, effectivePartition, dq, timestamp, key, value, headers, callbacks, buffer, nowMs);
                     // Set buffer to null, so that deallocate doesn't return it back to free pool, since it's used in the batch.
                     if (appendResult.newBatchCreated)
@@ -388,7 +411,9 @@ public class RecordAccumulator {
                                               ByteBuffer buffer,
                                               long nowMs) {
         assert partition != RecordMetadata.UNKNOWN_PARTITION;
-
+        /**
+         * 尝试把数据写入批次里面
+         */
         RecordAppendResult appendResult = tryAppend(timestamp, key, value, headers, callbacks, dq, nowMs);
         if (appendResult != null) {
             // Somebody else found us a batch, return the one we waited for! Hopefully this doesn't happen often...
@@ -396,10 +421,18 @@ public class RecordAccumulator {
         }
 
         MemoryRecordsBuilder recordsBuilder = recordsBuilder(buffer, apiVersions.maxUsableProduceMagic());
+        /**
+         * 封装批次
+         */
         ProducerBatch batch = new ProducerBatch(new TopicPartition(topic, partition), recordsBuilder, nowMs);
+        /**
+         * 下面代码中会再次调用tryAppend()方法将数据添加到批次中,如果失败则直接抛异常.
+         */
         FutureRecordMetadata future = Objects.requireNonNull(batch.tryAppend(timestamp, key, value, headers,
                 callbacks, nowMs));
-
+        /**
+         * 把批次放入到队列的末尾
+         */
         dq.addLast(batch);
         incomplete.add(batch);
 

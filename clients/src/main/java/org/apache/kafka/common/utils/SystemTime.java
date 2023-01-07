@@ -51,8 +51,9 @@ public class SystemTime implements Time {
                 long currentTimeMs = milliseconds();
                 if (currentTimeMs >= deadlineMs)
                     throw new TimeoutException("Condition not satisfied before deadline");
-
+                // 等待sender线程对相关参数进行更新, sender更新完毕之后会唤醒这里
                 obj.wait(deadlineMs - currentTimeMs);
+                // 代码执行完说明要么数据更新了,要么等待超时了
             }
         }
     }

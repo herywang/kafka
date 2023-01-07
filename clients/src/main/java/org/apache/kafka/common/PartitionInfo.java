@@ -21,6 +21,7 @@ package org.apache.kafka.common;
  */
 public class PartitionInfo {
     private final String topic;
+    // 分区编号
     private final int partition;
     private final Node leader;
     private final Node[] replicas;

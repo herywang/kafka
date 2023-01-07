@@ -328,7 +328,15 @@ public class Sender implements Runnable {
         client.poll(pollTimeout, currentTimeMs);
     }
 
+    /**
+     * 发送producer生产的数据
+     * @param now 当前时间
+     * @return
+     */
     private long sendProducerData(long now) {
+        // 获取元数据, 第一次进来时这里是没有的,因此下面所有代码都不用看了
+        // 我们用的是场景驱动方式进行的开发
+        // 拉取元数据重点关注调用这个方法的下面一行代码client.poll()
         Cluster cluster = metadata.fetch();
         // get the list of partitions with data ready to send
         RecordAccumulator.ReadyCheckResult result = this.accumulator.ready(cluster, now);

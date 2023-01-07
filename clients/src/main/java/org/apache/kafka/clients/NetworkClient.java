@@ -69,6 +69,7 @@ import java.util.stream.Collectors;
  * user-facing producer and consumer clients.
  * <p>
  * This class is not thread-safe!
+ * kafka中封装了一个network client类,专门用于处理网络的请求
  */
 public class NetworkClient implements KafkaClient {
 
@@ -463,6 +464,7 @@ public class NetworkClient implements KafkaClient {
     // package-private for testing
     void sendInternalMetadataRequest(MetadataRequest.Builder builder, String nodeConnectionId, long now) {
         ClientRequest clientRequest = newClientRequest(nodeConnectionId, builder, now, true);
+        // 存储请求
         doSend(clientRequest, true, now);
     }
 
@@ -541,6 +543,7 @@ public class NetworkClient implements KafkaClient {
      *                metadata timeout
      * @param now The current time in milliseconds
      * @return The list of responses received
+     * 拉取元数据步骤
      */
     @Override
     public List<ClientResponse> poll(long timeout, long now) {
@@ -554,15 +557,17 @@ public class NetworkClient implements KafkaClient {
             completeResponses(responses);
             return responses;
         }
-
+        // 1. 封装了拉取元数据的请求
         long metadataTimeout = metadataUpdater.maybeUpdate(now);
         try {
+            // 2. 执行网络IO操作, 进行复杂的网络操作(关于网络后续会有详细的分析)
             this.selector.poll(Utils.min(timeout, metadataTimeout, defaultRequestTimeoutMs));
         } catch (IOException e) {
             log.error("Unexpected error during I/O", e);
         }
 
         // process completed actions
+        // 3. 对网络响应的一些处理进行处理, 响应里面就存在我们需要的元数据
         long updatedNow = this.time.milliseconds();
         List<ClientResponse> responses = new ArrayList<>();
         handleCompletedSends(responses, updatedNow);
@@ -882,8 +887,10 @@ public class NetworkClient implements KafkaClient {
 
             // If the received response includes a throttle delay, throttle the connection.
             maybeThrottle(response, req.header.apiVersion(), req.destination, now);
-            if (req.isInternalRequest && response instanceof MetadataResponse)
+            if (req.isInternalRequest && response instanceof MetadataResponse) {
+                // 如果是关于元数据的相应,则调用下面的处理
                 metadataUpdater.handleSuccessfulResponse(req.header, now, (MetadataResponse) response);
+            }
             else if (req.isInternalRequest && response instanceof ApiVersionsResponse)
                 handleApiVersionsResponse(responses, req, now, (ApiVersionsResponse) response);
             else
@@ -1047,7 +1054,7 @@ public class NetworkClient implements KafkaClient {
                 log.debug("Give up sending metadata request since no node is available");
                 return reconnectBackoffMs;
             }
-
+            // 这个里面会封装请求
             return maybeUpdate(now, node);
         }
 
@@ -1110,6 +1117,7 @@ public class NetworkClient implements KafkaClient {
                 log.trace("Ignoring empty metadata response with correlation id {}.", requestHeader.correlationId());
                 this.metadata.failedUpdate(now);
             } else {
+                //
                 this.metadata.update(inProgress.requestVersion, response, inProgress.isPartialUpdate, now);
             }
 
@@ -1138,11 +1146,13 @@ public class NetworkClient implements KafkaClient {
          */
         private long maybeUpdate(long now, Node node) {
             String nodeConnectionId = node.idString();
-
+            // 判断是否已经建立好网络连接,(因为还没有学习kafka网络知识,因此这里可直接认为网络已经建立好了)
             if (canSendRequest(nodeConnectionId, now)) {
+                // 封装元数据请求:metaDataRequest
                 Metadata.MetadataRequestAndVersion requestAndVersion = metadata.newMetadataRequestAndVersion(now);
                 MetadataRequest.Builder metadataRequest = requestAndVersion.requestBuilder;
                 log.debug("Sending metadata request {} to node {}", metadataRequest, node);
+                // 存储请求, doSend()方法
                 sendInternalMetadataRequest(metadataRequest, nodeConnectionId, now);
                 inProgress = new InProgressData(requestAndVersion.requestVersion, requestAndVersion.isPartialUpdate);
                 return defaultRequestTimeoutMs;
