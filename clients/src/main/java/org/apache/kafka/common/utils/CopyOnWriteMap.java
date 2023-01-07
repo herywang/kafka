@@ -83,8 +83,21 @@ public class CopyOnWriteMap<K, V> implements ConcurrentMap<K, V> {
         this.map = Collections.emptyMap();
     }
 
+    /**
+     * 虽然加了synchronized关键字, 重量级锁, 但是由于是纯内存的操作, 因此性能是能够保证的
+     * 读写分离.
+     * 这种数据结构适合写少, 读多的应用场景
+     * this.map使用volatile关键字修饰, 说明map是具有可见性的, 如果get数据时这个map发生了变化,这也是能够感知到的
+     *
+     * @param k key with which the specified value is to be associated
+     * @param v value to be associated with the specified key
+     * @return
+     */
     @Override
     public synchronized V put(K k, V v) {
+        /**
+         * 这种事典型的读写分离式设计方式, 先开辟新的内存空间, 插入数据,然后再将this.map重新赋值, 并且是unmodifiable的
+         */
         Map<K, V> copy = new HashMap<K, V>(this.map);
         V prev = copy.put(k, v);
         this.map = Collections.unmodifiableMap(copy);

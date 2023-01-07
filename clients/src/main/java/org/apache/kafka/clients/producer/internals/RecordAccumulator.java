@@ -313,6 +313,8 @@ public class RecordAccumulator {
                 // check if we have an in-progress batch
                 /**
                  * 步骤1: 根据分区从batches中找到队列, 如果不存在, 则新建一个ArrayDequeue<>()
+                 * 注意: 每生产一条数据, 都会从batches中读取当前partition对应的队列, 如果没有的话会写入到batches中一条队列
+                 * 显然this.batches是一个读多写少的数据结构,因此作者自定义了一个适应这种并发场景的高效map: CopyOnWriteMap数据结构
                  */
                 Deque<ProducerBatch> dq = topicInfo.batches.computeIfAbsent(effectivePartition, k -> new ArrayDeque<>());
                 synchronized (dq) {
@@ -1247,6 +1249,22 @@ public class RecordAccumulator {
      * Per topic info.
      */
     private static class TopicInfo {
+
+        /**
+         * 每个分区对应一个队列
+         * key: partition number
+         * value: dequeue<ProducerBatch>
+         *     使用的数据结构: CopyOnWriteMap, 这个数据结构是kafka自己设计的
+         *     有了这个数据结构整体的提升了封装batch的性能
+         * batches 读和写的场景总结:
+         * 读:
+         *  生产者每生产一条数据, 就会从batches中读取批次信息, 假如生产者每秒生产10w条信息, 那么每秒就会发生10w次读取操作
+         * 写:
+         *    假设有100个分区, 那么就会插入100次数据.
+         *    只有第一次生产数据时, 没有对应的分区队列, 此时会写入batches
+         *    从始至终仅仅会写100次
+         *
+         */
         public final ConcurrentMap<Integer /*partition*/, Deque<ProducerBatch>> batches = new CopyOnWriteMap<>();
         public final BuiltInPartitioner builtInPartitioner;
 
