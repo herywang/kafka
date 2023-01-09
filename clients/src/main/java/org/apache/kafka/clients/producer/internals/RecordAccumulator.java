@@ -291,7 +291,9 @@ public class RecordAccumulator {
         try {
             // Loop to retry in case we encounter partitioner's race conditions.
             while (true) {
-                // 场景驱动设计, 第一次进来由于某些条件的不满足会执行完while里面全部代码,第二次进来
+                /**
+                 * 场景驱动设计, 第一次进来由于某些条件的不满足会执行完while里面全部代码,第二次进来
+                 */
                 // If the message doesn't have any partition affinity, so we pick a partition based on the broker
                 // availability and performance.  Note, that here we peek current partition before we hold the
                 // deque lock, so we'll need to make sure that it's not changed while we were waiting for the
@@ -317,15 +319,21 @@ public class RecordAccumulator {
                  * 显然this.batches是一个读多写少的数据结构,因此作者自定义了一个适应这种并发场景的高效map: CopyOnWriteMap数据结构
                  */
                 Deque<ProducerBatch> dq = topicInfo.batches.computeIfAbsent(effectivePartition, k -> new ArrayDeque<>());
+                /**
+                 * 假设三个线程  1   2    3同时往dq中对应的一个分区队列中写入数据, 到这里就会变成串行化
+                 *
+                 */
                 synchronized (dq) {
                     // After taking the lock, validate that the partition hasn't changed and retry.
                     if (partitionChanged(topic, topicInfo, partitionInfo, dq, nowMs, cluster))
                         continue;
 
                     /**
-                     * 步骤2: 尝试往队列中写数据
+                     * 步骤2: 尝试往队列的batch中写数据
                      * 一开始第一次进来这里尝试添加数据是失败的, 因为现在虽然已经有了队列,但是数据是写在batches中的, batch是需要内存的,
                      * 而目前还没有分配内存, 因此下面种的if()代码块中的逻辑不会被执行.
+                     *
+                     * 第二次代码进来的时候由于dq已经不为空了, 因此下面代码返回的结果appendResult不为空, 代码执行到这里就return了.
                      */
                     RecordAppendResult appendResult = tryAppend(timestamp, key, value, headers, callbacks, dq, nowMs);
                     if (appendResult != null) {
@@ -356,6 +364,8 @@ public class RecordAccumulator {
                     /**
                      * 步骤4:
                      * 从空闲内存池中分配大小, bufferPool是在kafkaProducer类中new出来的, 默认大小32MB
+                     *
+                     * 线程 1 2 3都会执行到这里, 申请分配内存, 假设每个线程都申请了16KB的内存,
                      */
                     buffer = free.allocate(size, maxTimeToBlock);
                     // Update the current time in case the buffer allocation blocked above.
@@ -370,9 +380,11 @@ public class RecordAccumulator {
                         continue;
                     /**
                      * 步骤5:
-                     * 将消息写入到批次里面
+                     * 将消息写入到batch里面
+                     * buffer: 从内存池中分配的空间
                      */
-                    RecordAppendResult appendResult = appendNewBatch(topic, effectivePartition, dq, timestamp, key, value, headers, callbacks, buffer, nowMs);
+                    RecordAppendResult appendResult = appendNewBatch(topic, effectivePartition, dq, timestamp, key,
+                                                                     value, headers, callbacks, buffer, nowMs);
                     // Set buffer to null, so that deallocate doesn't return it back to free pool, since it's used in the batch.
                     if (appendResult.newBatchCreated)
                         buffer = null;
@@ -383,6 +395,7 @@ public class RecordAccumulator {
                 }
             }
         } finally {
+            // 把数据写入到batch中之后, 申请的内存就没什么用了, 因此这里需要还回到内存池
             free.deallocate(buffer);
             appendsInProgress.decrementAndGet();
         }
@@ -414,17 +427,17 @@ public class RecordAccumulator {
                                               long nowMs) {
         assert partition != RecordMetadata.UNKNOWN_PARTITION;
         /**
-         * 尝试把数据写入批次里面
+         * 尝试把数据写入batch里面, 第一次进来肯定会执行失败, 同样是场景驱动设计模式
          */
         RecordAppendResult appendResult = tryAppend(timestamp, key, value, headers, callbacks, dq, nowMs);
         if (appendResult != null) {
             // Somebody else found us a batch, return the one we waited for! Hopefully this doesn't happen often...
             return appendResult;
         }
-
+        // 初始化RecordBuilder,
         MemoryRecordsBuilder recordsBuilder = recordsBuilder(buffer, apiVersions.maxUsableProduceMagic());
         /**
-         * 封装批次
+         * 封装batch
          */
         ProducerBatch batch = new ProducerBatch(new TopicPartition(topic, partition), recordsBuilder, nowMs);
         /**
@@ -470,8 +483,10 @@ public class RecordAccumulator {
                                          Callback callback, Deque<ProducerBatch> deque, long nowMs) {
         if (closed)
             throw new KafkaException("Producer closed while send in progress");
+        // 从队列中拿出最后一个
         ProducerBatch last = deque.peekLast();
         if (last != null) {
+            // 计算从dequeue中拿到的batch大小
             int initialBytes = last.estimatedSizeInBytes();
             FutureRecordMetadata future = last.tryAppend(timestamp, key, value, headers, callback, nowMs);
             if (future == null) {
