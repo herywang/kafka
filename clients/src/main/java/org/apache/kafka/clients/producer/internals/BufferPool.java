@@ -49,6 +49,7 @@ public class BufferPool {
     private final long totalMemory;
     private final int poolableSize;
     private final ReentrantLock lock;
+    // 一块一块的内存, 和连接池是一样的道理
     private final Deque<ByteBuffer> free;
     private final Deque<Condition> waiters;
     /** Total available memory is the sum of nonPooledAvailableMemory and the number of byte buffers in free * poolableSize.  */
@@ -125,18 +126,30 @@ public class BufferPool {
 
         try {
             // check if we have a free buffer of the right size pooled
+            // 如果我们申请的内存块大小等于配置设定好的一个批次大小, 并且内存池不为空, 直接从内存池拿出一个块出来用就行了
+            /**
+             * 场景驱动设计方式, 第一次进来, 内存储肯定是没有一块一块的内存数据的, 因此这里是获取不到内存数据的
+             *
+             */
             if (size == poolableSize && !this.free.isEmpty())
                 return this.free.pollFirst();
 
             // now check if the request is immediately satisfiable with the
             // memory on hand or if we need to block
+            // 内存块个数 乘以 每个内存块大小 = freeListSize 的大小
             int freeListSize = freeSize() * this.poolableSize;
+            /**
+             * size: 我们要申请的内存
+             * this.nonPooledAvailableMemory + freeListSize: 目前可用内存
+             */
             if (this.nonPooledAvailableMemory + freeListSize >= size) {
                 // we have enough unallocated or pooled memory to immediately
                 // satisfy the request, but need to allocate the buffer
+                // 如果大于, 直接分配内存就可以了
                 freeUp(size);
                 this.nonPooledAvailableMemory -= size;
             } else {
+                // 一条消息大小超过了32k
                 // we are out of memory and will have to block
                 int accumulated = 0;
                 Condition moreMemory = this.lock.newCondition();
@@ -145,11 +158,16 @@ public class BufferPool {
                     this.waiters.addLast(moreMemory);
                     // loop over and over until we have a buffer or have reserved
                     // enough memory to allocate one
+                    /**
+                     * 总的内存分配思路:
+                     * 可能一下子不能分配这么多, 一点一点的去分配
+                     */
                     while (accumulated < size) {
                         long startWaitNs = time.nanoseconds();
                         long timeNs;
                         boolean waitingTimeElapsed;
                         try {
+                            // 当有人释放内存的时候, 会调用condition.signal()方法对当前阻塞线程进行唤醒
                             waitingTimeElapsed = !moreMemory.await(remainingTimeToBlockNs, TimeUnit.NANOSECONDS);
                         } finally {
                             long endWaitNs = time.nanoseconds();
@@ -171,19 +189,23 @@ public class BufferPool {
 
                         // check if we can satisfy this request from the free list,
                         // otherwise allocate memory
+                        // 再次尝试看看一下内存池里面有没有数据, 如果内存池里面有数据, 并且申请的大小就是一个批次大小, 则直接从队列中拿出一个
+                        // 申请成功.
                         if (accumulated == 0 && size == this.poolableSize && !this.free.isEmpty()) {
                             // just grab a buffer from the free list
                             buffer = this.free.pollFirst();
                             accumulated = size;
                         } else {
+                            // 如果申请的内存大小
                             // we'll need to allocate memory, but we may only get
                             // part of what we need on this iteration
                             freeUp(size - accumulated);
+                            // 内存扣减, 计算已分配的内存有多大.
                             int got = (int) Math.min(size - accumulated, this.nonPooledAvailableMemory);
                             this.nonPooledAvailableMemory -= got;
                             accumulated += got;
                         }
-                    }
+                    }// end while 一直循环, 直到分配完成相应内存大小
                     // Don't reclaim memory on throwable since nothing was thrown
                     accumulated = 0;
                 } finally {
@@ -205,8 +227,10 @@ public class BufferPool {
         }
 
         if (buffer == null)
+            // 分配内存(else中的情况)
             return safeAllocateByteBuffer(size);
         else
+            // if条件中的情况, dq中有满足大小的内存块
             return buffer;
     }
 
@@ -265,11 +289,13 @@ public class BufferPool {
         lock.lock();
         try {
             if (size == this.poolableSize && size == buffer.capacity()) {
+                // 如果还回的内存大小就等等于一个批次的大小16KB, 则直接放到free队列中, 具体内存池的结构参考我们画的内存架构图
                 buffer.clear();
                 this.free.add(buffer);
             } else {
                 this.nonPooledAvailableMemory += size;
             }
+            // 从等待获取内存的队列中拿出condition, 调用signal()方法唤醒分配的线程
             Condition moreMem = this.waiters.peekFirst();
             if (moreMem != null)
                 moreMem.signal();
