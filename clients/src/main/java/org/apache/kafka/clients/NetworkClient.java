@@ -437,6 +437,7 @@ public class NetworkClient implements KafkaClient {
     public boolean isReady(Node node, long now) {
         // if we need to update our metadata now declare all requests unready to make metadata requests first
         // priority
+        // 写数据的时候不能是正在更新元数据的时候.
         return !metadataUpdater.isUpdateDue(now) && canSendRequest(node.idString(), now);
     }
 

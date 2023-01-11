@@ -662,10 +662,26 @@ public class RecordAccumulator {
     private long batchReady(long nowMs, boolean exhausted, TopicPartition part, Node leader,
                             long waitedTimeMs, boolean backingOff, boolean full,
                             long nextReadyCheckDelayMs, Set<Node> readyNodes) {
+        // 如果要发送的主机列表中没有包含当前主机
         if (!readyNodes.contains(leader) && !isMuted(part)) {
+            /**
+             * 场景驱动方式, 第一次发送消息时, backingOff为false, 因此 timeToWaitMs = lingerMs
+             *
+             * linger默认值为0, 0 代表来一条消息发送一条消息, 显然是不合适的, 因此在kafka中记着要配置这一项.
+             * 假设我们配置的lingerMs为100MS, 则说明消息存放超过100MS就必须发送出去了
+             *
+             * timeToWaitMs: 最多能等待多久
+             * waitedTimeMs: 已经等待的时间
+             * timeLeftMs: 还要再等待的时间
+             */
             long timeToWaitMs = backingOff ? retryBackoffMs : lingerMs;
             boolean expired = waitedTimeMs >= timeToWaitMs;
             boolean transactionCompleting = transactionManager != null && transactionManager.isCompleting();
+            /**
+             * full: 当前批次写满了
+             * expired: 超时了
+             * exhausted: 内存耗尽
+             */
             boolean sendable = full
                     || expired
                     || exhausted
@@ -673,6 +689,7 @@ public class RecordAccumulator {
                     || flushInProgress()
                     || transactionCompleting;
             if (sendable && !backingOff) {
+                // 把可以发送批次的partition leader所在的主机加入到readyNodes数据结构中
                 readyNodes.add(leader);
             } else {
                 long timeLeftMs = Math.max(timeToWaitMs - waitedTimeMs, 0);
@@ -702,6 +719,11 @@ public class RecordAccumulator {
     private long partitionReady(Cluster cluster, long nowMs, String topic,
                                 TopicInfo topicInfo,
                                 long nextReadyCheckDelayMs, Set<Node> readyNodes, Set<String> unknownLeaderTopics) {
+        /**
+         * 拿到当前topic对应的partition map信息,
+         * key: leader partition ID, value
+         * value: batches dequeue
+         */
         ConcurrentMap<Integer, Deque<ProducerBatch>> batches = topicInfo.batches;
         // Collect the queue sizes for available partitions to be used in adaptive partitioning.
         int[] queueSizes = null;
@@ -717,11 +739,18 @@ public class RecordAccumulator {
         }
 
         int queueSizesIndex = -1;
+        /**
+         * 只要内存池中的wait队列中有数据, 说明内存池的内存不够大
+         */
         boolean exhausted = this.free.queued() > 0;
+        /**
+         * 遍历所有的分区数据, 每个分区对应一个队列
+         */
         for (Map.Entry<Integer, Deque<ProducerBatch>> entry : batches.entrySet()) {
             TopicPartition part = new TopicPartition(topic, entry.getKey());
             // Advance queueSizesIndex so that we properly index available
             // partitions.  Do it here so that it's done for all code paths.
+            // 根据分区的leader partition获取到在那一台kafka的机器上
             Node leader = cluster.leaderFor(part);
             if (leader != null && queueSizes != null) {
                 ++queueSizesIndex;
@@ -745,20 +774,40 @@ public class RecordAccumulator {
             synchronized (deque) {
                 // Deques are often empty in this path, esp with large partition counts,
                 // so we exit early if we can.
+                /**
+                 * 从队列的队头获取到一个批次
+                 */
                 ProducerBatch batch = deque.peekFirst();
                 if (batch == null) {
                     continue;
                 }
 
+                /**
+                 * 由于kafka有重试机制, 因此下面的一段操作主要是关于发送消息重试判断的代码逻辑
+                 * 如果重试次数大于0并且上一次重试时间和当前时间的间隔
+                 * batch.attempts(): 重试次数
+                 * lastAttemptMs: 上一次重试时间
+                 * waitedTimeMs: 已经等待的时间
+                 * backingOff: 表示重新发送数据的时间到了
+                 * 如果当前时间减去上一次尝试时间小于重试时间间隔时, 说明充实时间到了, 换种说法可能更好理解一点:
+                 * 如果上一次重试时间 加上 重试时间间隔 大于 当前时间
+                 */
                 waitedTimeMs = batch.waitedTimeMs(nowMs);
+                // nowMs - lastAttemptMs < retryBackoffMs
                 backingOff = batch.attempts() > 0 && waitedTimeMs < retryBackoffMs;
                 dequeSize = deque.size();
+                /**
+                 * 如果dequeSize>1, 说明至少有一个批次肯定写满了, 肯定可以发送数据了
+                 *
+                 * 也有可能这个队列只有一个批次, 但这个批次也刚好写满了
+                 */
                 full = dequeSize > 1 || batch.isFull();
             }
 
             if (leader == null) {
                 // This is a partition for which leader is not known, but messages are available to send.
                 // Note that entries are currently not removed from batches when deque is empty.
+                // 如果没有找到对应主机, 则放到相应的队列中,下一次拉取元数据时拉取一下即可, 这种情况一般不会存在
                 unknownLeaderTopics.add(part.topic());
             } else {
                 if (queueSizes != null)

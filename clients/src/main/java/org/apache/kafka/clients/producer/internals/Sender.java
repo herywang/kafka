@@ -325,6 +325,10 @@ public class Sender implements Runnable {
 
         long currentTimeMs = time.milliseconds();
         long pollTimeout = sendProducerData(currentTimeMs);
+        /**
+         * 步骤9: 真正执行网络请求的地方
+         * 包括: 发送请求, 接收处理响应都是这行代码干的事
+         */
         client.poll(pollTimeout, currentTimeMs);
     }
 
@@ -337,11 +341,23 @@ public class Sender implements Runnable {
         // 获取元数据, 第一次进来时这里是没有的,因此下面所有代码都不用看了
         // 我们用的是场景驱动方式进行的开发
         // 拉取元数据重点关注调用这个方法的下面一行代码client.poll()
+        /**
+         *  第二次进来的时候这里能够获取到元数据
+         * 发送数据步骤初探:
+         * 步骤1: 获取元数据
+         */
         Cluster cluster = metadata.fetch();
         // get the list of partitions with data ready to send
+        /**
+         * 步骤2: 判断有哪些partition有数据可以发送, 获取到这个partition的leader partition对应的broker主机, 因为我们数据最终是要发给
+         * leader的.
+         */
         RecordAccumulator.ReadyCheckResult result = this.accumulator.ready(cluster, now);
 
         // if there are any partitions whose leaders are not known yet, force metadata update
+        /**
+         * 标识还没有拉取到元数据的topic, 执行强制元数据更新拉取
+         */
         if (!result.unknownLeaderTopics.isEmpty()) {
             // The set of topics with unknown leader contains topics with leader election pending as well as
             // topics which may have expired. Add the topic again to metadata to ensure it is included
@@ -355,10 +371,14 @@ public class Sender implements Runnable {
         }
 
         // remove any nodes we aren't ready to send to
+        // 拿到ready的leader partition对应的主机节点, 遍历
         Iterator<Node> iter = result.readyNodes.iterator();
         long notReadyTimeout = Long.MAX_VALUE;
         while (iter.hasNext()) {
             Node node = iter.next();
+            /**
+             * 步骤4: 检查与要发送数据的主机网络是否建立好了
+             */
             if (!this.client.ready(node, now)) {
                 // Update just the readyTimeMs of the latency stats, so that it moves forward
                 // every time the batch is ready (then the difference between readyTimeMs and
@@ -374,6 +394,15 @@ public class Sender implements Runnable {
         }
 
         // create produce requests
+        /**
+         * 我们发送的leader partition可能有很多个, 但是有可能多个leader partition都在一个主机节点上.
+         * 当分区个数大于服务器节点个数时, 肯定存在多个 leader partition存在同一台主机上, 下面这一行代码做的工作就是按照broker对partition
+         * 进行分组
+         * broker0:{p0, p2}
+         * broker1:{p1}
+         * broker3:{p3,p4}
+         * ...
+         */
         Map<Integer, List<ProducerBatch>> batches = this.accumulator.drain(cluster, result.readyNodes, this.maxRequestSize, now);
         addToInflightBatches(batches);
         if (guaranteeMessageOrder) {
@@ -383,7 +412,9 @@ public class Sender implements Runnable {
                     this.accumulator.mutePartition(batch.topicPartition);
             }
         }
-
+        /**
+         * 步骤6: 放弃超时的batch,
+         */
         accumulator.resetNextBatchExpiryTime();
         List<ProducerBatch> expiredInflightBatches = getExpiredInflightBatches(now);
         List<ProducerBatch> expiredBatches = this.accumulator.expiredBatches(now);
@@ -421,6 +452,9 @@ public class Sender implements Runnable {
             // otherwise the select time will be the time difference between now and the metadata expiry time;
             pollTimeout = 0;
         }
+        /**
+         * 步骤7: 创建封装存储请求
+         */
         sendProduceRequests(batches, now);
         return pollTimeout;
     }
