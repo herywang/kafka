@@ -211,11 +211,8 @@ public class Sender implements Runnable {
 
     private void addToInflightBatches(List<ProducerBatch> batches) {
         for (ProducerBatch batch : batches) {
-            List<ProducerBatch> inflightBatchList = inFlightBatches.get(batch.topicPartition);
-            if (inflightBatchList == null) {
-                inflightBatchList = new ArrayList<>();
-                inFlightBatches.put(batch.topicPartition, inflightBatchList);
-            }
+            List<ProducerBatch> inflightBatchList = inFlightBatches.computeIfAbsent(batch.topicPartition,
+                                                                                    k -> new ArrayList<>());
             inflightBatchList.add(batch);
         }
     }
@@ -378,6 +375,8 @@ public class Sender implements Runnable {
             Node node = iter.next();
             /**
              * 步骤4: 检查与要发送数据的主机网络是否建立好了
+             * 如果client.ready(node,now)返回的是false，代码移除readyNodes里面要发送消息的主机，因此利用场景驱动方式，这里面iter迭代器
+             * 中所有的主机都会被移除，因此最终result.readyNodes是空的
              */
             if (!this.client.ready(node, now)) {
                 // Update just the readyTimeMs of the latency stats, so that it moves forward
@@ -402,6 +401,7 @@ public class Sender implements Runnable {
          * broker1:{p1}
          * broker3:{p3,p4}
          * ...
+         * 第一次进来网络没有建立，batches为空集合
          */
         Map<Integer, List<ProducerBatch>> batches = this.accumulator.drain(cluster, result.readyNodes, this.maxRequestSize, now);
         addToInflightBatches(batches);

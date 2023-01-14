@@ -1026,6 +1026,8 @@ public class RecordAccumulator {
      * @param maxSize The maximum number of bytes to drain
      * @param now The current unix time in milliseconds
      * @return A list of {@link ProducerBatch} for each node specified with total size less than the requested maxSize.
+     * 网络连接前第一次进来时，由于Sender中的 this.client.ready()方法返回false，因此result中的nodes会被至为空，因此第一次进来这里代码的nodes
+     * 参数为empty
      */
     public Map<Integer, List<ProducerBatch>> drain(Cluster cluster, Set<Node> nodes, int maxSize, long now) {
         if (nodes.isEmpty())

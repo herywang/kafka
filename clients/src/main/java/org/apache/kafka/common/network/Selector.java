@@ -16,6 +16,8 @@
  */
 package org.apache.kafka.common.network;
 
+import org.apache.kafka.clients.KafkaClient;
+import org.apache.kafka.clients.producer.internals.ProducerMetadata;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.MetricName;
 import org.apache.kafka.common.errors.AuthenticationException;
@@ -83,6 +85,11 @@ import java.util.concurrent.atomic.AtomicReference;
  * various getters. These are reset by each call to <code>poll()</code>.
  *
  * This class is not thread safe!
+ * 基于Java NIO的selector Kafka自己封装的一个selector
+ *
+ * 在KafkaProducer初始化的时候会初始化networkClient对象，这个对象中传入Selector对象，Selector初始化的位置就在这里.
+ * {@link org.apache.kafka.clients.producer.KafkaProducer newSender(LogContext, KafkaClient, ProducerMetadata)} }
+ * Selector是NetworkClient中的一个核心属性
  */
 public class Selector implements Selectable, AutoCloseable {
 
@@ -102,17 +109,38 @@ public class Selector implements Selectable, AutoCloseable {
     }
 
     private final Logger log;
+    /**
+     * Java NIO里面的selector组件，负责网络的建立、发送网络请求，处理网络IO的一个核心组件
+     */
     private final java.nio.channels.Selector nioSelector;
+    /**
+     * broker和我们kafka channel的映射，这里的kafka channel可以理解为NIO编程中的 SocketChannel，代表的是一个网络连接
+     */
     private final Map<String, KafkaChannel> channels;
     private final Set<KafkaChannel> explicitlyMutedChannels;
     private boolean outOfMemory;
+    /**
+     * 已经完成发送出去的网络请求
+     */
     private final List<NetworkSend> completedSends;
+    /**
+     * 已经接收到的并且处理完的响应
+     */
     private final LinkedHashMap<String, NetworkReceive> completedReceives;
     private final Set<SelectionKey> immediatelyConnectedKeys;
     private final Map<String, KafkaChannel> closingChannels;
     private Set<SelectionKey> keysWithBufferedRead;
+    /**
+     * 没有建立连接的主机
+     */
     private final Map<String, ChannelState> disconnected;
+    /**
+     * 建立连接的主机
+     */
     private final List<String> connected;
+    /**
+     * 建立连接失败的主机
+     */
     private final List<String> failedSends;
     private final Time time;
     private final SelectorMetrics sensors;

@@ -293,12 +293,13 @@ public class NetworkClient implements KafkaClient {
     public boolean ready(Node node, long now) {
         if (node.isEmpty())
             throw new IllegalArgumentException("Cannot connect to empty node " + node);
-
+        // 场景驱动方式，代码第一次进来这里肯定是不具备发送条件的，因此下面这块代码不会返回true
         if (isReady(node, now))
             return true;
-
+        // 判断是否可以尝试去连接到网络
         if (connectionStates.canConnect(node.idString(), now))
             // if we are interested in sending to a node and we don't have a connection to it, initiate one
+            // 初始化网路连接
             initiateConnect(node, now);
 
         return false;
