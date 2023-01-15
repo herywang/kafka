@@ -49,6 +49,7 @@ public class PlaintextTransportLayer implements TransportLayer {
     public boolean finishConnect() throws IOException {
         boolean connected = socketChannel.finishConnect();
         if (connected)
+            // 注销OP_CONNECT事件，增加了OP_READ事件，此时这个网络连接就能够接收服务端发送过来的响应了
             key.interestOps(key.interestOps() & ~SelectionKey.OP_CONNECT | SelectionKey.OP_READ);
         return connected;
     }

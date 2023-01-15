@@ -266,27 +266,40 @@ public class Selector implements Selectable, AutoCloseable {
      * <p>
      * Note that this call only initiates the connection, which will be completed on a future {@link #poll(long)}
      * call. Check {@link #connected()} to see which (if any) connections have completed after a given poll call.
-     * @param id The id for the new connection
+     * @param id The id for the new connection，节点的唯一ID
      * @param address The address to connect to
      * @param sendBufferSize The send buffer for the new connection
      * @param receiveBufferSize The receive buffer for the new connection
      * @throws IllegalStateException if there is already a connection for that id
      * @throws IOException if DNS resolution fails on the hostname or if the broker is down
+     * 下面其实就是基础的Java NIO网络编程
      */
     @Override
     public void connect(String id, InetSocketAddress address, int sendBufferSize, int receiveBufferSize) throws IOException {
+        // 确保此节点没有已经建立连接
         ensureNotRegistered(id);
+        // 客户端打开一个channel，
         SocketChannel socketChannel = SocketChannel.open();
         SelectionKey key = null;
         try {
+            // 配置socketChannel，包含no-blocking，buffer-size等信息
             configureSocketChannel(socketChannel, sendBufferSize, receiveBufferSize);
+            /**
+             * 执行网络连接。由于是NIO的方式，执行channel.connect()方法时，如果时本地连接，则会返回true，否则的话返回false，由后台selector
+             * 进行轮训，最终在finishConnect()回调方法中完成连接的建立。因此正常情况下这里的connected参数值为false。
+             *
+             * 因此我们不妨猜测一下，真正完成连接建立的地方是在Sender线程中的client.poll()方法中完成的连接建立
+             */
             boolean connected = doConnect(socketChannel, address);
+            // 这个socket就往select上注册了一个OP_CONNECT事件，标识要进行网络连接
             key = registerChannel(id, socketChannel, SelectionKey.OP_CONNECT);
 
             if (connected) {
                 // OP_CONNECT won't trigger for immediately connected channels
                 log.debug("Immediately connected to node {}", id);
+                // 将这个连接成功的key缓存起来
                 immediatelyConnectedKeys.add(key);
+                //如果连接成功，则这里取消前面注册的连接事件：OP_CONNECT
                 key.interestOps(0);
             }
         } catch (IOException | RuntimeException e) {
@@ -317,6 +330,9 @@ public class Selector implements Selectable, AutoCloseable {
             socket.setSendBufferSize(sendBufferSize);
         if (receiveBufferSize != Selectable.USE_DEFAULT_BUFFER_SIZE)
             socket.setReceiveBufferSize(receiveBufferSize);
+        /**如果不设置，则为false，此时会开启nagle算法，它会把网络中一些小的数据包搜集起来，组合成一个大的数据包然后再一起发送出去
+         *来避免网络拥塞。Kafka必须将这里设置为true，因为Kafka有些数据确实就比较小，他这里就不会发送了，这显然不合理。
+         **/
         socket.setTcpNoDelay(true);
     }
 
@@ -352,8 +368,17 @@ public class Selector implements Selectable, AutoCloseable {
             throw new IllegalStateException("There is already a connection for id " + id + " that is still being closed");
     }
 
+    /**
+     * 将开启的channel注册到selector上
+     * @param id 通信连接服务端唯一ID
+     * @param socketChannel 发送数据客户端启动的channel
+     * @param interestedOps 注册连接事件标识
+     * @return 注册后的selection key
+     * @throws IOException
+     */
     protected SelectionKey registerChannel(String id, SocketChannel socketChannel, int interestedOps) throws IOException {
         SelectionKey key = socketChannel.register(nioSelector, interestedOps);
+        // 根据socketChannel封装一个KafkaChannel
         KafkaChannel channel = buildAndAttachKafkaChannel(socketChannel, id, key);
         this.channels.put(id, channel);
         if (idleExpiryManager != null)
@@ -365,6 +390,7 @@ public class Selector implements Selectable, AutoCloseable {
         try {
             KafkaChannel channel = channelBuilder.buildChannel(id, key, maxReceiveSize, memoryPool,
                 new SelectorChannelMetadataRegistry());
+            // 把key和KafkaChannel关联起来，后面使用起来比较方便，可以根据key找到KafkaChannel，也可以根据KafkaChannel直接找到对应的key
             key.attach(channel);
             return channel;
         } catch (Exception e) {
@@ -413,6 +439,7 @@ public class Selector implements Selectable, AutoCloseable {
      */
     public void send(NetworkSend send) {
         String connectionId = send.destinationId();
+        // 获取到KafkaChannel，往channel上存一个发送的请求
         KafkaChannel channel = openOrClosingChannelOrFail(connectionId);
         if (closingChannels.containsKey(connectionId)) {
             // ensure notification via `disconnected`, leave channel in the state in which closing was triggered
@@ -490,11 +517,13 @@ public class Selector implements Selectable, AutoCloseable {
 
         /* check ready keys */
         long startSelect = time.nanoseconds();
+        // 从selector上找有多少个key注册到它上面了
         int numReadyKeys = select(timeout);
         long endSelect = time.nanoseconds();
         this.sensors.selectTime.record(endSelect - startSelect, time.milliseconds(), false);
-
+        // 因为我们用场景驱动的方式确实注册了一个OP_CONNECT事件，因此这里的numReadyKeys确实大于0，下面if中的代码逻辑会执行
         if (numReadyKeys > 0 || !immediatelyConnectedKeys.isEmpty() || dataInBuffers) {
+            // 拿到所有ready的key
             Set<SelectionKey> readyKeys = this.nioSelector.selectedKeys();
 
             // Poll from channels that have buffered data (but nothing more from the underlying socket)
@@ -537,7 +566,9 @@ public class Selector implements Selectable, AutoCloseable {
     void pollSelectionKeys(Set<SelectionKey> selectionKeys,
                            boolean isImmediatelyConnected,
                            long currentTimeNanos) {
+        // 遍历selector拿到的ready的key
         for (SelectionKey key : determineHandlingOrder(selectionKeys)) {
+            // 根据key找到对应的kafkaChannel
             KafkaChannel channel = channel(key);
             long channelStartTimeNanos = recordTimePerConnection ? time.nanoseconds() : 0;
             boolean sendFailed = false;
@@ -551,7 +582,15 @@ public class Selector implements Selectable, AutoCloseable {
             try {
                 /* complete any connections that have finished their handshake (either normally or immediately) */
                 if (isImmediatelyConnected || key.isConnectable()) {
+                    /**
+                     * 代码第一次进来走的是这个分支完成连接建立
+                     */
                     if (channel.finishConnect()) {
+                        /**
+                         * 核心代码 finishConnect(), 最后完成网络的连接。如果我们之前没有完成网络连接三次握手，这个地方一定会帮助你完成
+                         * 最终的网络连接
+                         **/
+                        // 把连接建立的channel添加到connected集合中
                         this.connected.add(nodeId);
                         this.sensors.connectionCreated.record();
 
@@ -618,6 +657,7 @@ public class Selector implements Selectable, AutoCloseable {
 
                 long nowNanos = channelStartTimeNanos != 0 ? channelStartTimeNanos : currentTimeNanos;
                 try {
+                    // 发送数据到服务器（生产数据）
                     attemptWrite(key, channel, nowNanos);
                 } catch (Exception e) {
                     sendFailed = true;
@@ -669,7 +709,9 @@ public class Selector implements Selectable, AutoCloseable {
     // package-private for testing
     void write(KafkaChannel channel) throws IOException {
         String nodeId = channel.id();
+        // 写数据到网络中
         long bytesSent = channel.write();
+        // 判断数据是否发送完毕了，发送完了之后移除OP_WRITE事件
         NetworkSend send = channel.maybeCompleteSend();
         // We may complete the send with bytesSent < 1 if `TransportLayer.hasPendingWrites` was true and `channel.write()`
         // caused the pending writes to be written to the socket channel buffer

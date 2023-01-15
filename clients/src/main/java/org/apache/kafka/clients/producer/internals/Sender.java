@@ -324,7 +324,10 @@ public class Sender implements Runnable {
         long pollTimeout = sendProducerData(currentTimeMs);
         /**
          * 步骤9: 真正执行网络请求的地方
-         * 包括: 发送请求, 接收处理响应都是这行代码干的事
+         * 包括: 发送请求, 接收处理响应都是这行代码干的事。场景驱动方式，第一次调用上面一行sendProducerData()方法时，由于batches为空，因此
+         * 没有封装请求，我们猜测下面这一行代码会去建立网络连接。
+         * 由于这段代码时包裹在while(true)中，因此下一次循环过来网络连接建立好了，就会进行数据发送。
+         * 因此我们得出结论：如果网络没有建立好，是不会发送消息的，而是进行网络连接的建立
          */
         client.poll(pollTimeout, currentTimeMs);
     }
@@ -413,7 +416,7 @@ public class Sender implements Runnable {
             }
         }
         /**
-         * 步骤6: 放弃超时的batch,
+         * 步骤6: 放弃超时的batch, 场景驱动方式进来的，第一次result中的数据为空，消息都没发出去，因此就没有超时这一说法。
          */
         accumulator.resetNextBatchExpiryTime();
         List<ProducerBatch> expiredInflightBatches = getExpiredInflightBatches(now);
@@ -453,7 +456,11 @@ public class Sender implements Runnable {
             pollTimeout = 0;
         }
         /**
-         * 步骤7: 创建封装存储请求
+         * 步骤7: 创建封装存储请求。如果网络连接没有建立好，batches为空，因此下面这段代码也不会执行的。
+         *
+         * 我们往partition上发送消息时，有一些partition是在同一个broker上，如果我们一个分区一个分区的发送网络请求，那网络请求就有些频繁。
+         * 集群中网络资源是非常珍贵的，因此会造成网络资源浪费。因此这里会把发往同一个broker上面的partition数据封装成同一个请求，然后
+         * 统一一次发送出去，减少了网络请求次数。因此这也是Kafka网络高性能的一点。
          */
         sendProduceRequests(batches, now);
         return pollTimeout;
@@ -834,6 +841,7 @@ public class Sender implements Runnable {
 
     /**
      * Create a produce request from the given record batches
+     * 给定批次的数据创建request
      */
     private void sendProduceRequest(long now, int destination, short acks, int timeout, List<ProducerBatch> batches) {
         if (batches.isEmpty())
@@ -886,8 +894,10 @@ public class Sender implements Runnable {
         RequestCompletionHandler callback = response -> handleProduceResponse(response, recordsByPartition, time.milliseconds());
 
         String nodeId = Integer.toString(destination);
+
         ClientRequest clientRequest = client.newClientRequest(nodeId, requestBuilder, now, acks != 0,
                 requestTimeoutMs, callback);
+        // 发送数据（实际上只是添加到InFlightRequests集合中，由后台线程遍历发送
         client.send(clientRequest, now);
         log.trace("Sent produce request to {}: {}", nodeId, requestBuilder);
     }

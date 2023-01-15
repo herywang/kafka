@@ -91,7 +91,10 @@ public class NetworkClient implements KafkaClient {
     /* the state of each node's connection */
     private final ClusterConnectionStates connectionStates;
 
-    /* the set of requests currently being sent or awaiting a response */
+    /* the set of requests currently being sent or awaiting a response
+    * 顾名思义，这个集合里面默认存储的是"飞行中"的请求，意思就是发送途中，还没有收到响应的请求，默认最多能存储5个，因为之前说过Kafka默认最多能容忍
+    * 5个请求没有收到响应。如果收到响应，会将这里面的数据移除
+    * */
     private final InFlightRequests inFlightRequests;
 
     /* the socket send buffer size in bytes */
@@ -998,6 +1001,9 @@ public class NetworkClient implements KafkaClient {
             connectionStates.connecting(nodeConnectionId, now, node.host());
             InetAddress address = connectionStates.currentAddress(nodeConnectionId);
             log.debug("Initiating connection to node {} using address {}", node, address);
+            /**
+             * TODO 尝试建立网络连接
+             */
             selector.connect(nodeConnectionId,
                     new InetSocketAddress(address, node.port()),
                     this.socketSendBuffer,
