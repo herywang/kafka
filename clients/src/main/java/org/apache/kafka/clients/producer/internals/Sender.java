@@ -294,6 +294,7 @@ public class Sender implements Runnable {
      */
     void runOnce() {
         if (transactionManager != null) {
+            // 处理数据幂等性问题
             try {
                 transactionManager.maybeResolveSequences();
 

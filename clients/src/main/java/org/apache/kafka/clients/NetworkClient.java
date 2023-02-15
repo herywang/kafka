@@ -878,7 +878,12 @@ public class NetworkClient implements KafkaClient {
      */
     private void handleCompletedReceives(List<ClientResponse> responses, long now) {
         for (NetworkReceive receive : this.selector.completedReceives()) {
+            // 获取broker的ID
             String source = receive.source();
+            /**
+             * Kafka有这样一个机制：最多允许五个发送出去的请求还没有收到响应
+             */
+            // 根据Broker ID取出队列中最后一个请求, 这样一来就又能够增加新的 inflight请求丢在里面了.
             InFlightRequest req = inFlightRequests.completeNext(source);
 
             AbstractResponse response = parseResponse(receive.payload(), req.header);

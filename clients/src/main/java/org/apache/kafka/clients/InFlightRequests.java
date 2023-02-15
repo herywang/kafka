@@ -31,6 +31,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 final class InFlightRequests {
 
     private final int maxInFlightRequestsPerConnection;
+    // <Broker ID, List<请求>>集合
     private final Map<String, Deque<NetworkClient.InFlightRequest>> requests = new HashMap<>();
     /** Thread safe total number of in flight requests. */
     private final AtomicInteger inFlightRequestCount = new AtomicInteger(0);

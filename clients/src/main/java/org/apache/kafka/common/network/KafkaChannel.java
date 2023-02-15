@@ -386,11 +386,13 @@ public class KafkaChannel implements AutoCloseable {
     }
 
     public NetworkSend maybeCompleteSend() {
-        if (send != null && send.completed()) {
+        if (this.send != null && this.send.completed()) {
             midWrite = false;
             transportLayer.removeInterestOps(SelectionKey.OP_WRITE);
-            NetworkSend result = send;
-            send = null;
+            NetworkSend result = this.send;
+            // 当修改this.send对象中的值时, result里面也会变,此时result就像一个引用指针.
+            // 当对send进行重新赋值时, result就像重新拷贝了一份send对象
+            this.send = null;
             return result;
         }
         return null;
