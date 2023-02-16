@@ -205,7 +205,8 @@ public class BufferPool {
                             this.nonPooledAvailableMemory -= got;
                             accumulated += got;
                         }
-                    }// end while 一直循环, 直到分配完成相应内存大小
+                    }
+                    // end while 一直循环, 直到分配完成相应内存大小
                     // Don't reclaim memory on throwable since nothing was thrown
                     accumulated = 0;
                 } finally {

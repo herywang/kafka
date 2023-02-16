@@ -1073,7 +1073,6 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                         " to class " + producerConfig.getClass(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG).getName() +
                         " specified in value.serializer", cce);
             }
-
             // Try to calculate partition, but note that after this call it can be RecordMetadata.UNKNOWN_PARTITION,
             // which means that the RecordAccumulator would pick a partition using built-in logic (which may
             // take into account broker load, the amount of data produced to each partition, etc.).
@@ -1082,10 +1081,8 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
              * 因为前面同步等待拉取元数据已经获取到了元数据信息,因此这里可以根据元数据信息计算分区信息
              */
             int partition = partition(record, serializedKey, serializedValue, cluster);
-
             setReadOnly(record.headers());
             Header[] headers = record.headers().toArray();
-
             int serializedSize = AbstractRecords.estimateSizeInBytesUpperBound(apiVersions.maxUsableProduceMagic(),
                     compressionType, serializedKey, serializedValue, headers);
             /**
@@ -1093,10 +1090,8 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
              */
             ensureValidRecordSize(serializedSize);
             long timestamp = record.timestamp() == null ? nowMs : record.timestamp();
-
             // A custom partitioner may take advantage on the onNewBatch callback.
             boolean abortOnNewBatch = partitioner != null;
-
             // Append the record to the accumulator.  Note, that the actual partition may be
             // calculated there and can be accessed via appendCallbacks.topicPartition.
             /**
@@ -1217,7 +1212,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         // Issue metadata requests until we have metadata for the topic and the requested partition,
         // or until maxWaitTimeMs is exceeded. This is necessary in case the metadata
         // is stale and the number of partitions for this topic has increased in the meantime.
-        long nowNanos = time.nanoseconds();// 记录当前时间
+        long nowNanos = time.nanoseconds(); // 记录当前时间
         do {
             if (partition != null) {
                 log.trace("Requesting metadata update for partition {} of topic {}.", partition, topic);
