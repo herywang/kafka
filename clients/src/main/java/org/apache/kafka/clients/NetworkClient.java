@@ -468,6 +468,7 @@ public class NetworkClient implements KafkaClient {
 
     // package-private for testing
     void sendInternalMetadataRequest(MetadataRequest.Builder builder, String nodeConnectionId, long now) {
+        // 封装拉取元数据的请求
         ClientRequest clientRequest = newClientRequest(nodeConnectionId, builder, now, true);
         // 存储请求
         doSend(clientRequest, true, now);
@@ -582,6 +583,7 @@ public class NetworkClient implements KafkaClient {
         handleInitiateApiVersionRequests(updatedNow);
         handleTimedOutConnections(responses, updatedNow);
         handleTimedOutRequests(responses, updatedNow);
+        // 调用响应里面的回调函数处理响应, 回调函数来源于request里面封装
         completeResponses(responses);
 
         return responses;
@@ -903,8 +905,10 @@ public class NetworkClient implements KafkaClient {
             }
             else if (req.isInternalRequest && response instanceof ApiVersionsResponse)
                 handleApiVersionsResponse(responses, req, now, (ApiVersionsResponse) response);
-            else
+            else {
+                // 将生产数据接受到的响应添加到responses集合中
                 responses.add(req.completed(response, now));
+            }
         }
     }
 

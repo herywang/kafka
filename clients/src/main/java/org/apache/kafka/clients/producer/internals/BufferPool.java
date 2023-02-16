@@ -294,6 +294,7 @@ public class BufferPool {
                 this.free.add(buffer);
             } else {
                 this.nonPooledAvailableMemory += size;
+                // 等待垃圾回收buffer
             }
             // 从等待获取内存的队列中拿出condition, 调用signal()方法唤醒分配的线程
             Condition moreMem = this.waiters.peekFirst();

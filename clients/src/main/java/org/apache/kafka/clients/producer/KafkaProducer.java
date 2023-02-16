@@ -411,16 +411,27 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                 this.interceptors = new ProducerInterceptors<>(interceptorList);
             ClusterResourceListeners clusterResourceListeners = configureClusterResourceListeners(keySerializer,
                     valueSerializer, interceptorList, reporters);
+            /**
+             * 每个请求最大的字节大小, 防止发送过大的请求
+             */
             this.maxRequestSize = config.getInt(ProducerConfig.MAX_REQUEST_SIZE_CONFIG);
+            /**
+             * 内存池大小, producer最大能够缓存的发送到server的record size.
+             */
             this.totalMemorySize = config.getLong(ProducerConfig.BUFFER_MEMORY_CONFIG);
             // 设置压缩格式
             this.compressionType = CompressionType.forName(config.getString(ProducerConfig.COMPRESSION_TYPE_CONFIG));
 
+            /**
+             * 最大阻塞时长, 包括: 发送消息等待时长, 从内存池分配内存等待时长...等等
+             */
             this.maxBlockTimeMs = config.getLong(ProducerConfig.MAX_BLOCK_MS_CONFIG);
             int deliveryTimeoutMs = configureDeliveryTimeout(config, log);
 
             this.apiVersions = new ApiVersions();
-            // 配置kafka幂等性管理器,用于解决kafka retry机制导致的数据重复问题
+            /**
+             * 配置kafka幂等性管理器,用于解决kafka retry机制导致的数据重复问题
+             */
             this.transactionManager = configureTransactionState(config, logContext);
             // There is no need to do work required for adaptive partitioning, if we use a custom partitioner.
             boolean enableAdaptivePartitioning = partitioner == null &&
@@ -1108,7 +1119,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                     log.trace("Retrying append due to new batch creation for topic {} partition {}. The old partition was {}", record.topic(), partition, prevPartition);
                 }
                 /**
-                 * 步骤7: 将数据添加到accu
+                 * 步骤7: 将数据添加到accumulator
                  */
                 result = accumulator.append(record.topic(), partition, timestamp, serializedKey,
                     serializedValue, headers, appendCallbacks, remainingWaitMs, false, nowMs, cluster);
