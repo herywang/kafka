@@ -179,6 +179,7 @@ class KafkaServer(
    * Instantiates the LogManager, the SocketServer and the request handlers - KafkaRequestHandlers
    */
   override def startup(): Unit = {
+    // 整个Kafka服务端功能都是在这个里面
     try {
       info("starting")
 
@@ -292,6 +293,7 @@ class KafkaServer(
         //
         // Note that we allow the use of KRaft mode controller APIs when forwarding is enabled
         // so that the Envelope request is exposed. This is only used in testing currently.
+        // 启动NIO服务端
         socketServer = new SocketServer(config, metrics, time, credentialProvider, apiVersionManager)
         socketServer.startup(startProcessingRequests = false)
 
