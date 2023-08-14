@@ -124,6 +124,7 @@ public final class RecordAccumulator {
         this.lingerMs = lingerMs;
         this.retryBackoffMs = retryBackoffMs;
         this.deliveryTimeoutMs = deliveryTimeoutMs;
+        // TODO 后续讲解CopyOnWriteMap
         this.batches = new CopyOnWriteMap<>();
         this.free = bufferPool;
         this.incomplete = new IncompleteBatches();
@@ -211,6 +212,7 @@ public final class RecordAccumulator {
             byte maxUsableMagic = apiVersions.maxUsableProduceMagic();
             int size = Math.max(this.batchSize, AbstractRecords.estimateSizeInBytesUpperBound(maxUsableMagic, compression, key, value, headers));
             log.trace("Allocating a new {} byte message buffer for topic {} partition {} with remaining timeout {}ms", size, tp.topic(), tp.partition(), maxTimeToBlock);
+            // TODO 内存池如何分配对象?
             buffer = free.allocate(size, maxTimeToBlock);
 
             // Update the current time in case the buffer allocation blocked above.

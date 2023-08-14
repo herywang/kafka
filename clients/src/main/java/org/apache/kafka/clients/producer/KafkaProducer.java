@@ -918,6 +918,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             }
             // 步骤三: 计算分区信息
             int partition = partition(record, serializedKey, serializedValue, cluster);
+            // 将topic, partition封装成BO对象
             tp = new TopicPartition(record.topic(), partition);
 
             setReadOnly(record.headers());
@@ -944,8 +945,11 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
 
             if (result.abortForNewBatch) {
                 int prevPartition = partition;
+                // 下面一行代码在StickyPartitionCache中的indexCache添加了一条分区信息
                 partitioner.onNewBatch(record.topic(), cluster, prevPartition);
+                // 下面一行代码确定了分区信息
                 partition = partition(record, serializedKey, serializedValue, cluster);
+
                 tp = new TopicPartition(record.topic(), partition);
                 if (log.isTraceEnabled()) {
                     log.trace("Retrying append due to new batch creation for topic {} partition {}. The old partition was {}", record.topic(), partition, prevPartition);

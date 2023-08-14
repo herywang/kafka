@@ -132,7 +132,8 @@ public class BufferPool {
                 // satisfy the request, but need to allocate the buffer
                 freeUp(size);
                 this.nonPooledAvailableMemory -= size;
-            } else {
+            }
+            else {
                 // we are out of memory and will have to block
                 int accumulated = 0;
                 Condition moreMemory = this.lock.newCondition();
